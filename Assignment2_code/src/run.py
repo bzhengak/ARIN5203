@@ -64,24 +64,46 @@ Don't change above here; write your code below
 # note: models should moved to device defined on line 34.
 
 if args.variant == 'vanilla':
-    pass # [part c] Make some model here
+    gpt_model = model.GPT(mconf)  
+    gpt_model.to(device)  # [part c] Make some model here
 elif args.variant == 'perceiver':
     # set mconf.perceiver, and mconf.bottleneck_dim parameters appropriately.
-    pass # [part g] Make some other model here
+    mconf.perceiver = True
+    mconf.bottleneck_dim = args.bottleneck_dim
+    gpt_model = model.GPT(mconf)
+    gpt_model.to(device) # [part g] Make some other model here
 else:
     raise ValueError("Unknown model variant")
 
 # Perform pretraining, finetuning, or evaluation
 if args.function == 'pretrain':
     assert args.writing_params_path is not None
-    # TODO [part f]:
+    # [part f]:
     # - Given:
     #     1. A corpus specified in args.pretrain_corpus_path
     #     2. An output path args.writing_params_path for the model parameters
     # - Goals:
     #     1. Pretrain the model on this corpus
     #     2. Save the resulting model in args.writing_params_path
+    train_config = trainer.TrainerConfig(
+        max_epochs=650,
+        batch_size=128,
+        learning_rate=args.pretrain_lr,
+        lr_decay=True,
+        warmup_tokens=512*20,
+        final_tokens=200*len(pretrain_dataset)*block_size,
+        num_workers=4,
+        writer=writer,
+        ckpt_path=args.writing_params_path
+    )
     
+    # Create trainer instance
+    train_dataset = pretrain_dataset
+    test_dataset = None  # No test dataset for pretraining
+    trainer_obj = trainer.Trainer(gpt_model, train_dataset, test_dataset, train_config)
+    trainer_obj.train()
+
+
     # - Make sure to use the following hyperparameters for pretraining:
     # Hyperparameters for pretraining:
     # max_epochs=650
@@ -92,11 +114,11 @@ if args.function == 'pretrain':
     # final_tokens=200*len(pretrain_dataset)*block_size
     # num_workers=4
     # writer=writer 
-    raise NotImplementedError
+    
 elif args.function == 'finetune':
     assert args.writing_params_path is not None
     assert args.finetune_corpus_path is not None
-    # TODO [part c] [part f]:
+    #  [part c] [part f]:
     # - Given:
     #     1. A finetuning corpus specified in args.finetune_corpus_path
     #     2. A path args.reading_params_path containing pretrained model
@@ -128,13 +150,45 @@ elif args.function == 'finetune':
     #         writer=writer
     #     You can use the args.reading_params_path flag to switch between the
     #     number of epochs for each case.
-     
-    raise NotImplementedError
+    # Load pretrained parameters if provided
+    if args.reading_params_path is not None:
+        gpt_model.load_state_dict(torch.load(args.reading_params_path))
+    
+    # Load finetuning dataset
+    with open(args.finetune_corpus_path, encoding='utf-8') as f:
+        finetune_data = f.read()  
+    finetune_dataset = dataset.NameDataset(pretrain_dataset, finetune_data)
+
+    # Determine hyperparameters based on whether we're using a pretrained model
+    if args.reading_params_path is not None:
+        # Finetuning with pretrained model
+        max_epochs = 10
+    else:
+        # Finetuning without pretrained model
+        max_epochs = 75
+    
+    # Set up training configuration
+    train_config = trainer.TrainerConfig(
+        max_epochs=max_epochs,
+        batch_size=256,
+        learning_rate=args.finetune_lr,
+        lr_decay=True,
+        warmup_tokens=512*20,
+        final_tokens=200*len(pretrain_dataset)*block_size,
+        num_workers=4,
+        writer=writer,
+        ckpt_path=args.writing_params_path
+    )
+    
+    # Create trainer instance and finetune
+    trainer_obj = trainer.Trainer(gpt_model, finetune_dataset, None, train_config)
+    trainer_obj.train()
+    
 elif args.function == 'evaluate':
     assert args.outputs_path is not None
     assert args.reading_params_path is not None
     assert args.eval_corpus_path is not None
-    model.load_state_dict(torch.load(args.reading_params_path))
+    gpt_model.load_state_dict(torch.load(args.reading_params_path))
     correct = 0
     total = 0
     with open(args.outputs_path, 'w', encoding='utf-8') as fout:
@@ -143,7 +197,7 @@ elif args.function == 'evaluate':
             x = line.split('\t')[0]
             x = x + '⁇'
             x = torch.tensor([pretrain_dataset.stoi[s] for s in x], dtype=torch.long)[None,...].to(device)
-            pred = utils.sample(model, x, 32, sample=False)[0]
+            pred = utils.sample(gpt_model, x, 32, sample=False)[0]
             completion = ''.join([pretrain_dataset.itos[int(i)] for i in pred])
             pred = completion.split('⁇')[1]
             predictions.append(pred)

@@ -167,8 +167,42 @@ class CharCorruptionDataset(Dataset):
         return len(self.data)
 
     def __getitem__(self, idx):
-        # TODO [part e]: see spec above
-        raise NotImplementedError
+        #  [part e]: see spec above
+        # Get the document from data
+        doc = self.data[idx]
+        max_trunc = int(self.block_size * 7 / 8)
+        min_trunc = 4
+        doc_len = len(doc)
+        if doc_len < min_trunc:
+            trunc_doc = doc.ljust(min_trunc, self.PAD_CHAR)  # 确保至少4个字符
+        else:
+            trunc_len = random.randint(min_trunc, min(max_trunc, doc_len))
+            start = random.randint(0, doc_len - trunc_len)
+            trunc_doc = doc[start:start+trunc_len]
+        T = len(trunc_doc)
+
+        # 2. 随机拆分 prefix/masked_content/suffix
+        # masked_content 长度平均为 T/4，随机范围 [1, T-2]（确保 prefix 和 suffix 非空）
+        max_mask_len = max(1, T - 2)  # 至少留1个字符给prefix和suffix
+        mask_len = max(1, int(random.gauss(mu=T/4, sigma=T/8)))  # 高斯分布逼近平均1/4
+        mask_len = min(mask_len, max_mask_len)
+        # 随机选择 masked_content 的起始位置
+        mask_start = random.randint(0, T - mask_len)
+        mask_end = mask_start + mask_len
+        prefix = trunc_doc[:mask_start]
+        masked_content = trunc_doc[mask_start:mask_end]
+        suffix = trunc_doc[mask_end:]
+
+        # 3. 构建 masked_string
+        masked_string = f"{prefix}{self.MASK_CHAR}{suffix}{self.MASK_CHAR}{masked_content}"
+        # 填充到 block_size 长度
+        masked_string = masked_string.ljust(self.block_size, self.PAD_CHAR)[:self.block_size]
+
+        # 4. 生成 x (masked_string[:-1]) 和 y (masked_string[1:])
+        x = torch.tensor([self.stoi[c] for c in masked_string[:-1]], dtype=torch.long)
+        y = torch.tensor([self.stoi[c] for c in masked_string[1:]], dtype=torch.long)
+        return x, y
+            
 
 """
 Code under here is strictly for your debugging purposes; feel free to modify

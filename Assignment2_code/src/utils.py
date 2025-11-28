@@ -47,9 +47,10 @@ def sample(model, x, steps, temperature=1.0, sample=False, top_k=None):
     return x
 
 def get_name_prediction(model, dataset_object, input_string):
-    x = torch.tensor([dataset_object.stoi[s] for s in input_string], dtype=torch.long)[None,...].to(trainer_obj.device)
-    pred = utils.sample(model, x, 32, sample=False)[0]
-    completion = ''.join([train_dataset.itos[int(i)] for i in pred])
+    device = next(model.parameters()).device
+    x = torch.tensor([dataset_object.stoi[s] for s in input_string], dtype=torch.long)[None,...].to(device)
+    pred = sample(model, x, 32, sample=False)[0]
+    completion = ''.join([dataset_object.itos[int(i)] for i in pred])  
     pred = completion.split('⁇')[1]
     return pred
 

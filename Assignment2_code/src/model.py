@@ -64,8 +64,8 @@ class Block(nn.Module):
         )
 
     def forward(self, x):
-        x = x + self.attn(self.ln1(x))
-        x = x + self.mlp(self.ln2(x))
+        x = x + self.attn(self.ln1(x))  
+        x = x + self.mlp(self.ln2(x)) 
         return x
 
 
@@ -89,8 +89,20 @@ class DownProjectBlock(nn.Module):
     def __init__(self, config):
         super().__init__()
         ### YOUR CODE HERE
-        ### Hint: Copy over the code from Block and make necessary modifications.
-        pass
+
+        self.ln1 = nn.LayerNorm(config.n_embd)  
+        self.ln2 = nn.LayerNorm(config.n_embd)
+        self.attn = attention.CausalCrossAttention(config)
+        self.mlp = nn.Sequential(
+            nn.Linear(config.n_embd, 4 * config.n_embd),
+            nn.GELU(),
+            nn.Linear(4 * config.n_embd, config.n_embd),
+            nn.Dropout(config.resid_pdrop),
+        )
+        
+        self.C = nn.Parameter(torch.empty(1, config.bottleneck_dim, config.n_embd))
+        nn.init.xavier_uniform_(self.C)
+        
         ### END YOUR CODE
 
     def forward(self, x_input):
@@ -100,7 +112,13 @@ class DownProjectBlock(nn.Module):
         ### YOUR CODE HERE
         ### Hint: Copy over the code from Block and make necessary modifications.
         ### Should be around 3-5 lines.
-        pass
+        
+        b, t, c = x_input.size()
+        
+        attn_output = self.attn(x_input, self.ln1(self.C.expand(b, -1, -1)))
+        x = self.C.expand(b, -1, -1) + attn_output  
+        x = x + self.mlp(self.ln2(x)) 
+        return x
         ### END YOUR CODE
     
     
@@ -115,7 +133,15 @@ class UpProjectBlock(nn.Module):
         super().__init__()
         ### YOUR CODE HERE
         ### Hint: Copy over the code from Block and make necessary modifications.
-        pass
+        self.ln1 = nn.LayerNorm(config.n_embd) 
+        self.ln2 = nn.LayerNorm(config.n_embd)
+        self.attn = attention.CausalCrossAttention(config)
+        self.mlp = nn.Sequential(
+            nn.Linear(config.n_embd, 4 * config.n_embd),
+            nn.GELU(),
+            nn.Linear(4 * config.n_embd, config.n_embd),
+            nn.Dropout(config.resid_pdrop),
+        )
         ### END YOUR CODE
     
     def forward(self, y, x_input):
@@ -126,7 +152,11 @@ class UpProjectBlock(nn.Module):
         ### YOUR CODE HERE
         ### Hint: Copy over the code from Block and make necessary modifications.
         ### Should be around 3-5 lines.
-        pass
+
+        attn_output = self.attn(self.ln1(y), x_input)
+        x = x_input + attn_output  
+        x = x + self.mlp(self.ln2(x))
+        return x
         ### END YOUR CODE
     
 
@@ -156,7 +186,6 @@ class GPT(nn.Module):
             config.block_size = input_block_size
             self.up_block = UpProjectBlock(config)
             
-            
         else:
             self.blocks = nn.Sequential(*[Block(config) for _ in range(config.n_layer)])
         # decoder head
@@ -169,10 +198,22 @@ class GPT(nn.Module):
         print("number of parameters: {}".format(sum(p.numel() for p in self.parameters())))
 
     def _init_weights(self, module):
-        if isinstance(module, (nn.Linear, nn.Embedding)):
-            module.weight.data.normal_(mean=0.0, std=0.02)
-            if isinstance(module, nn.Linear) and module.bias is not None:
+        # if isinstance(module, (nn.Linear, nn.Embedding)):
+        #     module.weight.data.normal_(mean=0.0, std=0.02)
+        #     # nn.init.xavier_uniform_(module.weight)
+        #     if isinstance(module, nn.Linear) and module.bias is not None:
+        #         module.bias.data.zero_()
+        # elif isinstance(module, nn.LayerNorm):
+        #     module.bias.data.zero_()
+        #     module.weight.data.fill_(1.0)
+        if isinstance(module, nn.Linear):
+            # 线性层用xavier初始化，更稳定
+            nn.init.xavier_uniform_(module.weight)
+            if module.bias is not None:
                 module.bias.data.zero_()
+        elif isinstance(module, nn.Embedding):
+            # 嵌入层用正态分布，标准差调小
+            module.weight.data.normal_(mean=0.0, std=0.01)
         elif isinstance(module, nn.LayerNorm):
             module.bias.data.zero_()
             module.weight.data.fill_(1.0)
